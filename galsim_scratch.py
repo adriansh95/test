@@ -345,52 +345,6 @@ def make_dnl_bins():
         bin_edges = np.concatenate((bin_edges, temp_edges))
     return bin_edges
 
-def plot_for_steve():
-    filename = 'analysis/adc/datasets/galsim/galsim_dnl_dataset.pkl'
-    save_to = 'analysis/adc/plots/galsim/'
-
-    with open(filename, 'rb') as f:
-        dataset = pkl.load(f)
-        ideal_mus = dataset.means['Ideal']
-        ideal_sigs = dataset.sigmas['Ideal']
-        ideal_fluxes = dataset.fluxes['Ideal']
-        ideal_g1s = dataset.g1s['Ideal']
-        ideal_g2s = dataset.g2s['Ideal']
-        ideal_cxs = dataset.centroid_xs['Ideal']
-        ideal_cys = dataset.centroid_ys['Ideal']
-
-        adc_mus = dataset.means['ADC']
-        adc_sigs = dataset.sigmas['ADC']
-        adc_fluxes = dataset.fluxes['ADC']
-        adc_g1s = dataset.g1s['ADC']
-        adc_g2s = dataset.g2s['ADC']
-        adc_cxs = dataset.centroid_xs['ADC']
-        adc_cys = dataset.centroid_ys['ADC']
-
-        titles = ['Sigma', 'Flux', 'Shear', 'Centroid']
-
-        label_list = ['', '', ['g1', 'g2'], ['cx', 'cy']]
-
-        data_list = [adc_sigs - ideal_sigs, adc_fluxes - ideal_fluxes,
-                    [adc_g1s - ideal_g1s, adc_g2s - ideal_g2s],
-                    [adc_cxs - ideal_cxs, adc_cys - ideal_cys]]
-
-        fig, axs = plt.subplots(2, 2, figsize=(20, 20), sharex=True)
-        fig.suptitle('ADC - Ideal vs Ideal Flux', fontsize=24)
-
-        for ax, datas, labels, title in zip(axs.ravel(), data_list, label_list, titles):
-            ax.set_title(title, fontsize=18)
-            ax.grid(b=True)
-            if len(datas) == 2:
-                for data, label in zip(datas, labels):
-                    ax.scatter(ideal_fluxes, data, label=label)
-                    ax.legend(fontsize=12)
-            else:
-                ax.scatter(ideal_fluxes, datas)
-        figname = 'diffs_v_flux.png'
-        fig.savefig(os.path.join(save_to, figname))
-        print(f'Wrote {os.path.join(save_to, figname)}') 
-
 def plot_correction():
     filename = 'analysis/adc/datasets/galsim/galsim_dnl_dataset.pkl'
     save_to = 'analysis/adc/plots/galsim/'

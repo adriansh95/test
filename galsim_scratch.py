@@ -7,13 +7,12 @@ import matplotlib.ticker as mtick
 import sys
 from matplotlib import pyplot as plt
 from collections import defaultdict
-from eo_testing.adc.adcTask import adc_bit_dataset
+#from eo_testing.adc.adcTask import adc_bit_dataset
 from scipy import interpolate
-np.set_printoptions(suppress=True, linewidth=np.nan, threshold=sys.maxsize)
 
 class galsim_dnl_dataset():
     def __init__(self):#, ds_dict, n_shears):
-        self.means = defaultdict(dict)
+        #self.means = defaultdict(dict)
         self.sigmas = defaultdict(dict) 
         self.fluxes = defaultdict(dict) 
         self.g1s = defaultdict(dict) 
@@ -26,25 +25,22 @@ def save_dataset(dataset, filename):
         pkl.dump(dataset, f)
     print(f'Wrote {filename}')
 
-def make_blank_image(flux, g1, g2):
-    # random seed
-    #rng = galsim.BaseDeviate(12345)
-    
-    # model atmospheric turbulence as a VonKarman, with some small shear
-    gprof = galsim.VonKarman(lam=700., r0=0.2, L0=10.0)#.shear(g1=0.01, g2=0.00)
+def make_blank_image(flux, g1, g2, seed=None):
+    # model atmospheric turbulence as a VonKarman
+    gprof = galsim.VonKarman(lam=700., r0=0.2, L0=10.0)
     
     # add 4.5 microns sigma of Gaussian to model diffusion
     # convert 4.5 microns to arcsec with factor 0.2"/10micron 
     pixscale = 0.2/10.e-6
-    dprof = galsim.Gaussian(sigma=4.5e-6*pixscale)
+    dprof = galsim.Gaussian(flux=flux, sigma=4.5e-6*pixscale).shear(g1=g1, g2=g2)
     
     # add optical term, making up reasonable Zernike terms
     oprof = galsim.OpticalPSF(lam=700.0, diam=8.4,
-                              defocus = 0.1, coma1 = -0.1, coma2 = 0.005, astig1 = 0.1, astig2 = 0.005,
-                              obscuration = 0.4)
+                              defocus=0.1, coma1=-0.1, coma2=0.005, astig1=0.1, astig2=0.005,
+                              obscuration=0.4)
     
     # convolve these terms
-    prof = galsim.Convolve([gprof, dprof, oprof]).withFlux(flux).shear(g1=g1, g2=g2)
+    prof = galsim.Convolve([gprof, dprof, oprof])
     
     # draw image
     blank_image = galsim.Image(32, 32, scale=0.2, xmin=0, ymin=0, dtype=np.float64)  
@@ -59,33 +55,38 @@ def plot_star_image(im_dict, inshear, influx, im_num):
 
     star_image = galsim.Image(np.floor(im_arr), dtype=int, xmin=0, ymin=0)
     adc_image = make_adc_image(im_arr, pedestal, dnl_bins)
-    f, axs = plt.subplots(1, 2, figsize=(22, 11))
+    f, axs = plt.subplots(1, 3, figsize=(33, 11))
     star_moments = star_image.FindAdaptiveMom(weight=None, strict=False)
     adc_moments = adc_image.FindAdaptiveMom(weight=None, strict=False)
 
     #print(np.floor(im_arr), adc_image.array)
     diff = star_image.array - adc_image.array
-    idx = np.where(diff>100) 
-    print(star_image.array[idx], adc_image.array[idx])
-    print(star_moments.moments_amp)
-    print(star_moments.moments_sigma)
-    print(star_moments.observed_shape.g1, star_moments.observed_shape.g2)
-    print(star_moments.moments_centroid.x, star_moments.moments_centroid.y)
+    #idx = np.where(diff>100) 
+    #print(star_image.array[idx], adc_image.array[idx])
+    #print(star_moments.moments_amp)
+    #print(star_moments.moments_sigma)
+    #print(star_moments.observed_shape.g1, star_moments.observed_shape.g2)
+    #print(star_moments.moments_centroid.x, star_moments.moments_centroid.y)
 
-    print(adc_moments.moments_amp)
-    print(adc_moments.moments_sigma)
-    print(adc_moments.observed_shape.g1, adc_moments.observed_shape.g2)
-    print(adc_moments.moments_centroid.x, adc_moments.moments_centroid.y)
+    #print(adc_moments.moments_amp)
+    #print(adc_moments.moments_sigma)
+    #print(adc_moments.observed_shape.g1, adc_moments.observed_shape.g2)
+    #print(adc_moments.moments_centroid.x, adc_moments.moments_centroid.y)
  
  
     im0 = axs[0].imshow(star_image.array, origin='lower', interpolation='None')
     im1 = axs[1].imshow(adc_image.array, origin='lower', interpolation='None')
-    axs[0].set_title('Ideal')
-    axs[1].set_title('DNL')
-    cbar_ax = f.add_axes([0.93, 0.2, 0.025, 0.6])
-    f.colorbar(im0, cax=cbar_ax)
-    f.suptitle('Galaxies', fontsize=20)
-    #f.savefig('analysis/adc/plots/galsim/galaxy.png')
+    im2 = axs[2].imshow(diff, origin='lower', interpolation='None')
+    axs[0].set_title('Ideal', fontsize=18)
+    axs[1].set_title('DNL', fontsize=18)
+    axs[2].set_title('Difference', fontsize=18)
+    f.colorbar(im0, ax=axs[0], pad=0.2, orientation='horizontal')
+    f.colorbar(im1, ax=axs[1], pad=0.2, orientation='horizontal')
+    f.colorbar(im2, ax=axs[2], pad=0.2, orientation='horizontal')
+    #cbar_ax = f.add_axes([0.93, 0.2, 0.025, 0.6])
+    #f.colorbar(im0, cax=cbar_ax)
+    f.suptitle('Digitized Galaxy Images', fontsize=26)
+    f.savefig('analysis/adc/plots/galsim/galaxies.png')
     plt.show()
 
 def read_star_images(filename):
@@ -95,7 +96,7 @@ def read_star_images(filename):
 
 def write_star_images(input_fluxes, input_shears, n_ims=500):
     im_dict = defaultdict(dict)
-    write_dir = '/gpfs/slac/lsst/fs1/u/adriansh/analysis/adc/galsim/star_images'
+    write_dir = 'analysis/adc/datasets/galsim/star_images'
     fname = 'star_images.pkl'
     filename = os.path.join(write_dir, fname)
 
@@ -113,9 +114,12 @@ def write_star_images(input_fluxes, input_shears, n_ims=500):
         pkl.dump(im_dict, f)
     print(f'Wrote {filename}')
 
-def make_star_image(flux, g1, g2):
-    #rng = galsim.BaseDeviate(12345)
-    rng = galsim.BaseDeviate() # no seed
+def make_star_image(flux, g1, g2, seed=None):
+    if seed:
+        rng = galsim.BaseDeviate(seed)
+    else:
+        rng = galsim.BaseDeviate() # no seed
+
     blank_image, prof = make_blank_image(flux, g1, g2)
     star_image = prof.drawImage(image=blank_image, method='auto')
         
@@ -173,7 +177,7 @@ def make_dataset(im_dict):
 
     for ish in range(len(input_shears)):
         for iflux in input_fluxes:
-            dataset.means[ish][iflux] = copy.deepcopy(ds_dict)
+            #dataset.means[ish][iflux] = copy.deepcopy(ds_dict)
             dataset.sigmas[ish][iflux] = copy.deepcopy(ds_dict) 
             dataset.fluxes[ish][iflux] = copy.deepcopy(ds_dict) 
             dataset.g1s[ish][iflux] = copy.deepcopy(ds_dict) 
@@ -184,7 +188,7 @@ def make_dataset(im_dict):
     for ishear, ((g1, g2), fdict) in enumerate(im_dict.items()):
         print(g1, g2)
         for input_flux, im_arrs in fdict.items():
-            means = np.zeros((n_ims, n_iter)) #ideal, dnl, corrected
+            #means = np.zeros((n_ims, n_iter)) #ideal, dnl, corrected
             sigmas = np.zeros((n_ims, n_iter))
             fluxes = np.zeros((n_ims, n_iter))
             g1s = np.zeros((n_ims, n_iter))
@@ -193,7 +197,6 @@ def make_dataset(im_dict):
             cys = np.zeros((n_ims, n_iter))
 
             for n, arr in enumerate(im_arrs):
-                star_image = galsim.Image(arr, xmin=0, ymin=0)
 
                 # digitize and add pedestal
                 int_arr = np.floor(arr)
@@ -203,18 +206,23 @@ def make_dataset(im_dict):
                 images = [int_image, adc_image]#, corrected_image]
 
                 for i_image, image in enumerate(images):
+                    print(image.array)
                     # calculate HSM moments (these are in pixel coordinates)
                     moments = image.FindAdaptiveMom(weight=None, strict=False)
-                    means[i_image, n] = np.mean(image.array)
+                    help(moments)
+                    #means[i_image, n] = np.mean(image.array)
+                    #print(np.mean(image.array))
                     sigmas[i_image, n] = moments.moments_sigma
                     fluxes[i_image, n] = moments.moments_amp
+                    print(moments.moments_amp)
                     g1s[i_image, n] = moments.observed_shape.g1
                     g2s[i_image, n] = moments.observed_shape.g2
                     cxs[i_image, n] = moments.moments_centroid.x
                     cys[i_image, n] = moments.moments_centroid.y
 
+                exit()
             for ik, k in enumerate(ds_dict.keys()):
-                dataset.means[ishear][input_flux][k] = means[ik]
+                #dataset.means[ishear][input_flux][k] = means[ik]
                 dataset.sigmas[ishear][input_flux][k] = sigmas[ik] 
                 dataset.fluxes[ishear][input_flux][k] = fluxes[ik] 
                 dataset.g1s[ishear][input_flux][k] = g1s[ik] 
@@ -222,7 +230,7 @@ def make_dataset(im_dict):
                 dataset.centroid_xs[ishear][input_flux][k] = cxs[ik] 
                 dataset.centroid_ys[ishear][input_flux][k] = cys[ik] 
 
-    write_to = 'analysis/adc/datasets/galsim'
+    write_to = 'analysis/adc/datasets/galsim/'
     fname = 'galsim_dnl_dataset.pkl'
     filename = os.path.join(write_to, fname)
     save_dataset(dataset, filename)
@@ -288,7 +296,7 @@ def plot_vals(input_shears):
                                 linestyle='', label=r'$\gamma$ = ' + f'{input_shear[0]}+i{input_shear[1]}')
                     ax.legend(fontsize=12)
                     ax.set_ylabel(l, fontsize=18)
-                    ax.grid(b=True)
+                    ax.grid(visible=True)
             axs[1].set_xlabel('flux', fontsize=18)
 
         else:
@@ -300,7 +308,7 @@ def plot_vals(input_shears):
                             linestyle='', label=r'$\gamma$ = ' + f'{input_shear[0]}+i{input_shear[1]}')
                 ax.legend(fontsize=12)
                 ax.set_ylabel(label, fontsize=18)
-                ax.grid(b=True)
+                ax.grid(visible=True)
 
             ax.set_xlabel('flux', fontsize=18)
 
@@ -329,20 +337,25 @@ def interpolate_probs():
     return x, ip(x)
     
 def make_dnl_bins():
-    x, inprobs = interpolate_probs()
-    bin_edges = np.array([])
-    lp = len(inprobs[0])
-    for xx, probs in zip(x, inprobs):
-        temp_edges = [0]
-        bin_ws = np.power(2, np.arange(1, lp+1)) * probs
-        for i in range(lp):
-            new_edges = []
-            for edge in temp_edges:
-                new_edges.append(edge + bin_ws[-i])
-            temp_edges = temp_edges + new_edges
-            temp_edges.sort()
-        temp_edges = np.array(temp_edges) + xx
-        bin_edges = np.concatenate((bin_edges, temp_edges))
+    #x, inprobs = interpolate_probs()
+    #bin_edges = np.array([])
+    #lp = len(inprobs[0])
+    #for xx, probs in zip(x, inprobs):
+    #    temp_edges = [0]
+    #    bin_ws = np.power(2, np.arange(1, lp+1)) * probs
+    #    for i in range(lp):
+    #        new_edges = []
+    #        for edge in temp_edges:
+    #            new_edges.append(edge + bin_ws[-i])
+    #        temp_edges = temp_edges + new_edges
+    #        temp_edges.sort()
+    #    temp_edges = np.array(temp_edges) + xx
+    #    bin_edges = np.concatenate((bin_edges, temp_edges))
+
+    bin_edges = np.arange(2**18+1).astype(np.float64)
+    dnl = 0.05*np.random.randn(2**18-1)
+    bin_edges[1:-1] += dnl
+
     return bin_edges
 
 def plot_correction():
@@ -351,7 +364,7 @@ def plot_correction():
 
     with open(filename, 'rb') as f:
         dataset = pkl.load(f)
-        ideal_mus = dataset.means['Ideal']
+        #ideal_mus = dataset.means['Ideal']
         ideal_sigs = dataset.sigmas['Ideal']
         ideal_fluxes = dataset.fluxes['Ideal']
         ideal_g1s = dataset.g1s['Ideal']
@@ -376,7 +389,7 @@ def plot_correction():
             ax.set_xlabel('Uncorrected', fontsize=15)
             ax.set_ylabel('Corrected', fontsize=15)
             ax.tick_params(labelsize=15)
-            ax.grid(b=True)
+            ax.grid(visible=True)
             #plt.setp(ax.get_xticklabels(), rotation=30, ha='right')
             ax.ticklabel_format(style='sci', scilimits=(0,0))
 
@@ -398,7 +411,7 @@ def plot_correction():
 def plot_dataset():
     filename = 'analysis/adc/datasets/galsim/galsim_dnl_dataset.pkl'
     save_to = 'analysis/adc/plots/galsim/'
-    mean_bins = 50 #np.linspace(0.7, 0.8, 51)
+    #mean_bins = 50 #np.linspace(0.7, 0.8, 51)
     sigma_bins = 50 #np.linspace(1.5e-3, 4.5e-3, 51)
     flux_bins = 50 #np.linspace(20, 50, 51)
     shear_bins = 50 #np.linspace(-1.e-3, 1e-3, 51)
@@ -406,9 +419,9 @@ def plot_dataset():
 
     with open(filename, 'rb') as f:
         dataset = pkl.load(f)
-        ax_labels = ['Mean', 'Sigma', 'Flux', 'Shear', 'Centroid']
+        ax_labels = ['Sigma', 'Flux', 'Shear', 'Centroid']
 
-        hist_kwargs = [dict(bins=mean_bins),
+        hist_kwargs = [#dict(bins=mean_bins),
                        dict(bins=sigma_bins),
                        dict(bins=flux_bins),
                        dict(label=[f'g1', 
@@ -420,23 +433,21 @@ def plot_dataset():
                             bins=centroid_bins, fill=False, linewidth=3,
                             histtype='step', stacked=False)]
 
-        fig, axs = plt.subplots(5, 5, figsize=(20, 20), sharex=False)
+        fig, axs = plt.subplots(4, 4, figsize=(20, 20), sharex=False)
 
-        for ishear, fdict in dataset.means.items():
+        for ishear, fdict in dataset.sigmas.items():
             input_shear = input_shears[ishear]
 
-            for input_flux, means in fdict.items():
+            for input_flux, sigmas in fdict.items():
                 for ax in axs.ravel():
                     ax.cla()
-                ideal_mus = means['Ideal']
-                ideal_sigs = dataset.sigmas[ishear][input_flux]['Ideal']
+                ideal_sigs = sigmas['Ideal']
                 ideal_fluxes = dataset.fluxes[ishear][input_flux]['Ideal']
                 ideal_g1s = dataset.g1s[ishear][input_flux]['Ideal']
                 ideal_g2s = dataset.g2s[ishear][input_flux]['Ideal']
                 ideal_cxs = dataset.centroid_xs[ishear][input_flux]['Ideal']
                 ideal_cys = dataset.centroid_ys[ishear][input_flux]['Ideal']
 
-                ideal_mu = np.mean(ideal_mus)
                 ideal_sig = np.mean(ideal_sigs)
                 ideal_flux = np.mean(ideal_fluxes)
                 ideal_g1 = ideal_g1s.mean()
@@ -444,14 +455,13 @@ def plot_dataset():
                 ideal_cx = ideal_cxs.mean()
                 ideal_cy = ideal_cys.mean() 
 
-                hist_titles = [r'$\mu_i$' + f' = {ideal_mu:.3E}', r'$\sigma_i$' + f' = {ideal_sig:.3E}', 
+                hist_titles = [r'$\sigma_i$' + f' = {ideal_sig:.3E}', 
                                r'Flux$_i$' + f' = {ideal_flux:.3E}', 
                                r'$\gamma_{1,i}$' + f' = {ideal_g1:.3E}, ' + r'$\gamma_{2,i}$' + f' = {ideal_g2:.3E}, ',
                                r'$cx_i$' + f' = {ideal_cx:.3E}, ' + r'$cy_i$' + f' = {ideal_cy:.3E}, ']
 
                 for key in ['ADC']:#, 'Corrected']:
-                    data = [dataset.means[ishear][input_flux][key] - ideal_mus, 
-                            dataset.sigmas[ishear][input_flux][key] - ideal_sigs,
+                    data = [dataset.sigmas[ishear][input_flux][key] - ideal_sigs,
                             dataset.fluxes[ishear][input_flux][key] - ideal_fluxes, 
                             [dataset.g1s[ishear][input_flux][key] - ideal_g1s, 
                              dataset.g2s[ishear][input_flux][key] - ideal_g2s],
@@ -459,53 +469,55 @@ def plot_dataset():
                              dataset.centroid_ys[ishear][input_flux][key] - ideal_cys]]
 
 
-                for i in range(5):
-                    axs[i, 0].set_ylabel(ax_labels[i], ha='right', fontsize=18)
-                    axs[-1, i].set_xlabel(ax_labels[i], fontsize=18)
+                for i in range(4):
+                    axs[i, 0].set_ylabel(ax_labels[i], ha='right', fontsize=28)
+                    axs[-1, i].set_xlabel(ax_labels[i], fontsize=28)
 
                     axs[i, i].hist(data[i], **hist_kwargs[i])
-                    axs[i, i].set_title(hist_titles[i], fontsize=18)
-                    axs[i, i].legend(fontsize=12)
+                    axs[i, i].set_title(hist_titles[i], fontsize=28)
+                    axs[i, i].legend(fontsize=22)
+                    plt.setp(axs[-1, i].get_xticklabels(), rotation=30, ha='right')
 
-                    if i < 4:
+                    if i < 3:
                         axs[i, i].set_xticklabels([])
-                    else:
-                        plt.setp(axs[i, i].get_xticklabels(), rotation=30, ha='right')
 
                     for j in range(0, i):
-                        if i < 4:
+                        if i < 3:
                             axs[i, j].set_xticklabels([])
                         
                         if j > 0:
                             axs[i, j].set_yticklabels([])
 
-                        if j == 1:
-                            plt.setp(axs[i, j].get_xticklabels(), rotation=30, ha='right')
+                        #if j == 1:
+                        #    plt.setp(axs[i, j].get_xticklabels(), rotation=30, ha='right')
 
-                        if i == 3:
+                        if i == 2:
                             axs[i, j].scatter(data[j], data[i][0], label=f'g1', color='tab:blue', s=10)
                             axs[i, j].scatter(data[j], data[i][1], label=f'g2', color='tab:orange', s=10)
-                        elif i == 4 and j < 3:
+                        elif i == 3 and j < 2:
                             axs[i, j].scatter(data[j], data[i][0], label=f'cx', color='tab:blue', s=10)
                             axs[i, j].scatter(data[j], data[i][1], label=f'cy', color='tab:orange', s=10)
-                        elif i == 4 and j == 3:
+                        elif i == 3 and j == 2:
                             axs[i, j].scatter(data[j][0], data[i][0], label=f'g1, cx', color='tab:blue', s=10)
                             axs[i, j].scatter(data[j][0], data[i][1], label=f'g1, cy', color='tab:green', s=10)
                             axs[i, j].scatter(data[j][1], data[i][0], label=f'g2, cx', color='tab:orange', s=10)
                             axs[i, j].scatter(data[j][1], data[i][1], label=f'g2, cy', color='tab:purple', s=10)
-                            axs[i, j].legend(fontsize=12)
-                            plt.setp(axs[i, j].get_xticklabels(), rotation=30, ha='right')
+                            axs[i, j].legend(fontsize=22)
+                            #plt.setp(axs[i, j].get_xticklabels(), rotation=30, ha='right')
                         else:
                             axs[i, j].scatter(data[j], data[i], s=10)
-                        axs[i, j].grid(b=True)
+                        axs[i, j].grid(visible=True)
 
                     # hide upper off-diagonals
-                    for k in range(i+1, 5):
+                    for k in range(i+1, 4):
                         axs[i, k].set_frame_on(False)
                         axs[i, k].set_xticks([])
                         axs[i, k].set_yticks([])
 
-                fig.suptitle(f'{key} - Ideal for Input Shear = {input_shear}, Input Flux = {input_flux}', fontsize=26)
+                for ax in axs.ravel():
+                    ax.tick_params(labelsize=24)
+
+                fig.suptitle(f'{key} - Ideal for Input Shear = {input_shear}, Input Flux = {input_flux}', fontsize=36)
                 gam1 = input_shear[0]
                 gam2 = input_shear[1]
                 fig.savefig(os.path.join(save_to, f'{key}_ideal_diff_{gam1}_{gam2}_{input_flux}.png'))
@@ -523,18 +535,18 @@ def debug_scratch():
     print(diffs)#np.where(diffs<-100))
 
 input_fluxes = [10000, 50000, 100000, int(7e5), int(1.4e6)]
-input_shears = [(0, 0), (0.25, 0), (0, 0.25), (-0.25, 0)]
+input_shears = [(0, 0), (0.25, 0)]
 #make_star_image(10000, 0, 0)
 #write_star_images(input_fluxes, input_shears, n_ims=500)
 
 #cursed_images = [185]
-#fname = '/gpfs/slac/lsst/fs1/u/adriansh/analysis/adc/galsim/star_images/star_images.pkl'
-#im_dict = read_star_images(fname)
+fname = 'analysis/adc/datasets/galsim/star_images/star_images.pkl'
+im_dict = read_star_images(fname)
 #make_dataset(im_dict)
 #debug_scratch()
-#plot_star_image(im_dict, input_shears[2], input_fluxes[-2], 185)
+#plot_star_image(im_dict, input_shears[0], input_fluxes[0], 0)
 
-#plot_dataset()
-plot_vals(input_shears)
+plot_dataset()
+#plot_vals(input_shears)
 #plot_correction()
 #make_dnl_bins()

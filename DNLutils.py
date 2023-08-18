@@ -2,6 +2,12 @@ import numpy as np
 from scipy.signal import savgol_filter
 from scipy.stats import chisquare
 
+def solve_quadratic(a, b, c):
+    if a != 0:
+        return (-b + np.sqrt(b**2 - 4*a*c)) / (2*a)
+    else:
+        return -c / b
+
 def calculateINL(adcBins):
     idealMids = 0.5 + np.arange(len(adcBins[:-1]))
     adcMids = 0.5 * (adcBins[1:] + adcBins[:-1])
@@ -34,6 +40,7 @@ class ADCconstructor():
         self.measuredDist = measuredDist
         self.expectedDist = expectedDist
         self.codes = np.arange(len(measuredDist))
+        self.pdf = self.buildPDFfromFilter()
         self._minCounts = minCounts
         self._xCutoff = xCutoff
 
@@ -84,26 +91,27 @@ class ADCconstructor():
             floorLE = int(np.floor(leftEdge))
             nextInt = floorLE + 1
 
-            forwardArea = self._computeForwardArea(leftEdge)
+            forwardArea = self._computeForwardArea(leftEdge, "riemann")
            
             # This is an integer upper bound on where to place the right edge for the code
             # The right edge will lie between the integers corresponding to 
             # nextInt+i-2 and nextInt+i-1
             i = np.argwhere(forwardArea > measuredDist[code]).min()
-            
+ 
             # This is the integrated area under the filtered curve right of the leftEdge
             # and left of floor(rightEdge). It 0 in the case where floor(rightEdge) < leftEdge
-            c = forwardArea[i-1]
-            
+            integratedArea = forwardArea[i-1]
+ 
             # The integrated area under the filtered curve between max(floor(rightEdge), leftEdge)
             # and rightEdge is: (rightEdge - max(nextInt+i-2, leftEdge)) * 
             # expectedDist[max(nextInt+i-2, floor(leftEdge))]
             # Invoking the max function for the case where leftEdge > floor(rightEdge) (c=0 case)\
-            
-            # measuredDist[code] = c + (rightEdge - max(nextInt+i-2, leftEdge) *
+ 
+            # measuredDist[code] = integratedArea + (rightEdge - max(nextInt+i-2, leftEdge) *
             # expectedDist[max(nextInt+i-2, floor(leftEdge))]) gives
-            
-            rightEdge = ((measuredDist[code] - c)/(expectedDist[max(nextInt+i-2, floorLE)]) +
+ 
+            rightEdge = ((measuredDist[code] - integratedArea) /
+                         (expectedDist[max(nextInt+i-2, floorLE)]) +
                           max(nextInt+i-2, leftEdge))
                 
             edges[iCode+2] = rightEdge
@@ -118,15 +126,15 @@ class ADCconstructor():
 
         firstCode, lastCode = self.workingCodes[0], self.workingCodes[-1]
 
-        pdf = self.buildPDFfromFilter()
+        pdf = self.pdf
         slopes = pdf[1:] - pdf[:-1]
      
         if measuredDist[firstCode] > expectedDist[firstCode]:
-            a = slope[firstCode+1] - slope[firstCode-1]
+            a = slopes[firstCode+1] - slopes[firstCode-1]
             b = 2*(pdf[firstCode+1] + pdf[firstCode])
             c = pdf[firstCode+1] + pdf[firstCode] - 2*measuredDist[firstCode]
 
-            dx = (-b + np.sqrt(b**2 - 4*a*c)) / (2*a)
+            dx = solve_quadratic(a, b, c)
 
             codeWidth = 1 + 2*dx
         else:
@@ -139,18 +147,57 @@ class ADCconstructor():
         for iCode, code in enumerate(workingCodes[1:]):
             leftEdge = edges[iCode+1]
             floorLE = int(np.floor(leftEdge))
-            nextInt = int(np.ceil(leftEdge))
+            nextInt = floorLE + 1
 
-    def _computeForwardArea(self, leftEdge):
+            forwardArea = self._computeForwardArea(leftEdge, "trapazoid")
+           
+            # This is an integer upper bound on where to place the right edge for the code
+            # The right edge will lie between the integers corresponding to 
+            # nextInt+i-2 and nextInt+i-1
+            i = np.argwhere(forwardArea > measuredDist[code]).min()
+            
+            # This is the integrated area under the filtered curve right of the leftEdge
+            # and left of floor(rightEdge). It 0 in the case where floor(rightEdge) < leftEdge
+            integratedArea = forwardArea[i-1]
+            a = slopes[nextInt+i-2]
+            b = 2 * pdf[nextInt+i-2]
+            c = 2 * (integratedArea - measuredDist[code])
+            dx = solve_quadratic(a, b, c)
+            rightEdge = dx + max(nextInt+i-2, leftEdge)
+
+            edges[iCode+2] = rightEdge
+
+        return edges
+ 
+    def _computeForwardArea(self, leftEdge, mode):
         nextInt = int(np.ceil(leftEdge))
+        dx = (nextInt-leftEdge)
         expectedDist = self.expectedDist
         
         # The cumsum of this is the area under the filtered curve to the right
         # of the left edge for this code
         # 0 is prepended for the case where the right edge for this code should be
         # placed before the ceiling of the left edge.
-        dForwardArea = np.concatenate(([0], [(nextInt-leftEdge)*expectedDist[nextInt-1]],
-                                      expectedDist[nextInt:]))
+        if mode == "riemann":
+            firstRectangleArea = dx*expectedDist[nextInt-1]
+            if firstRectangleArea != 0:
+                dForwardArea = np.concatenate(([0], [firstRectangleArea],
+                                              expectedDist[nextInt:]))
+            else:
+                dForwardArea = np.concatenate(([firstRectangleArea],
+                                              expectedDist[nextInt:]))
+
+        elif mode == "trapazoid":
+            slopes = self.pdf[1:] - self.pdf[:-1]
+            firstTrapazoidArea = dx * (2 * self.pdf[nextInt] - 
+                                       slopes[nextInt-1] * dx) / 2
+            if firstTrapazoidArea != 0:
+                dForwardArea = np.concatenate(([0], [firstTrapazoidArea],
+                                              expectedDist[nextInt:]))
+            else:
+                dForwardArea = np.concatenate(([firstTrapazoidArea],
+                                              expectedDist[nextInt:]))
+            
         forwardArea = np.cumsum(dForwardArea)
         return forwardArea
 

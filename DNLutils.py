@@ -1,12 +1,8 @@
 import numpy as np
+
+from scipy.interpolate import CubicSpline
 from scipy.signal import savgol_filter
 from scipy.stats import chisquare
-
-def solve_quadratic(a, b, c):
-    if a != 0:
-        return (-b + np.sqrt(b**2 - 4*a*c)) / (2*a)
-    else:
-        return -c / b
 
 def calculateINL(adcBins):
     idealMids = 0.5 + np.arange(len(adcBins[:-1]))
@@ -35,38 +31,92 @@ def buildADCBinsFromINL(inl):
 
 class ADCconstructor():
     def __init__(self, measuredDist, expectedDist, minCounts=100, xCutoff=0):
-        useable = expectedDist > minCounts
+        useable = np.logical_and(expectedDist > minCounts, measuredDist > minCounts)
 
-        self.measuredDist = measuredDist
-        self.expectedDist = expectedDist
         self.codes = np.arange(len(measuredDist))
-        self.pdf = self.buildPDFfromFilter()
-        self._minCounts = minCounts
-        self._xCutoff = xCutoff
 
-        firstCode = max(self.codes[useable].min(), xCutoff)
-        lastCode = self.codes[useable].max()
+        firstCode = max(self.codes[useable][0], xCutoff)
+        lastCode = self.codes[useable][-1]
 
         if lastCode < firstCode:
             raise ValueError("firstCode cannot be greater than lastCode. Perhaps xCutoff is too high.")
         
-        self.workingCodes = np.arange(firstCode, lastCode+1)
+        workingCodes = np.arange(firstCode, lastCode+1)
+        fudgeFactor = measuredDist[workingCodes].sum() / expectedDist[workingCodes].sum()
+
+        self.workingCodes = workingCodes
+        self.measuredDist = measuredDist
+        self.expectedDist = expectedDist * fudgeFactor
+        #self.pdf = self.buildPDFfromFilter() # deprecated with spline
+        self._minCounts = minCounts
+        self._xCutoff = xCutoff
 
     def buildADCEdges(self, mode="riemann"):
-        measuredDist = self.measuredDist
-        minCounts = self._minCounts
-        xCutoff = self._xCutoff
         preCodes = np.arange(self.workingCodes[0])
-        postCodes = np.arange(self.workingCodes[-1]+1, self.codes.max()+1)
        
         if mode == "riemann":
             edges  =  self._buildEdgesRiemann()
-        elif mode == "trapazoid":
-            edges  =  self._buildEdgesTrapazoid()
+        elif mode == "spline":
+            edges = self._buildEdgesSpline()
+
+        postCodes = np.arange(len(preCodes) + len(edges) - 1, self.codes.max()+1)
 
         adcBins = np.concatenate((preCodes, edges, postCodes+1))
         return adcBins
 
+    def _buildEdgesSpline(self):
+        codes = self.codes
+        workingCodes = self.workingCodes
+        measuredDist = self.measuredDist
+        expectedDist = self.expectedDist
+
+        assert expectedDist[0] == 0
+
+        expectedDistIntegral = np.cumsum(expectedDist)
+        self.spline = CubicSpline(codes, expectedDistIntegral)
+        spline = self.spline
+        #splineDerivative = self.spline.derivative()
+
+        edges = [workingCodes[0]]
+
+        for i in range(len(workingCodes)): 
+            nCounts = measuredDist[workingCodes[i]]
+            leftEdge = edges[-1]
+
+            if spline(codes[-1]) - spline(leftEdge-1) < nCounts:
+                break
+
+            # Set an upperBound
+            for code in codes[codes > leftEdge]:
+                upperBoundIntegral = spline(code-1) - spline(leftEdge-1)
+                if upperBoundIntegral > nCounts:
+                    upperBound = code
+                    break
+
+            rightEdge = upperBound
+            nIterations = 0
+
+            while len(edges) < i+2: 
+                integral = spline(rightEdge-1) - spline(leftEdge-1)
+                stopCondition = (nCounts - 1e-4 * nCounts <
+                                 integral < nCounts + 1e-4 * nCounts) #make the requirement sufficient
+                tooWide = nCounts < integral
+
+                if stopCondition:					
+                    edges.append(rightEdge)  
+                else:
+                    nIterations += 1
+                    rightEdge = self._shiftEdge(nIterations, rightEdge, tooWide)
+
+        return edges
+
+    def _shiftEdge(self, nIterations, rightEdge, tooWide):
+        deltaEdge = (1/2)**(nIterations)
+        if tooWide:
+            return rightEdge - deltaEdge
+        else:
+            return rightEdge + deltaEdge
+		
     def _buildEdgesRiemann(self):
         codes = self.codes
         workingCodes = self.workingCodes
@@ -118,57 +168,7 @@ class ADCconstructor():
 
         return edges
 
-    def _buildEdgesTrapazoid(self):
-        codes = self.codes
-        workingCodes = self.workingCodes
-        measuredDist = self.measuredDist
-        expectedDist = self.expectedDist
 
-        firstCode, lastCode = self.workingCodes[0], self.workingCodes[-1]
-
-        pdf = self.pdf
-        slopes = pdf[1:] - pdf[:-1]
-     
-        if measuredDist[firstCode] > expectedDist[firstCode]:
-            a = slopes[firstCode+1] - slopes[firstCode-1]
-            b = 2*(pdf[firstCode+1] + pdf[firstCode])
-            c = pdf[firstCode+1] + pdf[firstCode] - 2*measuredDist[firstCode]
-
-            dx = solve_quadratic(a, b, c)
-
-            codeWidth = 1 + 2*dx
-        else:
-            codeWidth = measuredDist[firstCode]/expectedDist[firstCode]
-    
-        edges = np.nan * np.arange(len(workingCodes) + 1)
-        edges[0] = firstCode + 0.5 - codeWidth/2
-        edges[1] = firstCode + 0.5 + codeWidth/2
-
-        for iCode, code in enumerate(workingCodes[1:]):
-            leftEdge = edges[iCode+1]
-            floorLE = int(np.floor(leftEdge))
-            nextInt = floorLE + 1
-
-            forwardArea = self._computeForwardArea(leftEdge, "trapazoid")
-           
-            # This is an integer upper bound on where to place the right edge for the code
-            # The right edge will lie between the integers corresponding to 
-            # nextInt+i-2 and nextInt+i-1
-            i = np.argwhere(forwardArea > measuredDist[code]).min()
-            
-            # This is the integrated area under the filtered curve right of the leftEdge
-            # and left of floor(rightEdge). It 0 in the case where floor(rightEdge) < leftEdge
-            integratedArea = forwardArea[i-1]
-            a = slopes[nextInt+i-2]
-            b = 2 * pdf[nextInt+i-2]
-            c = 2 * (integratedArea - measuredDist[code])
-            dx = solve_quadratic(a, b, c)
-            rightEdge = dx + max(nextInt+i-2, leftEdge)
-
-            edges[iCode+2] = rightEdge
-
-        return edges
- 
     def _computeForwardArea(self, leftEdge, mode):
         nextInt = int(np.ceil(leftEdge))
         dx = (nextInt-leftEdge)
@@ -178,37 +178,17 @@ class ADCconstructor():
         # of the left edge for this code
         # 0 is prepended for the case where the right edge for this code should be
         # placed before the ceiling of the left edge.
-        if mode == "riemann":
-            firstRectangleArea = dx*expectedDist[nextInt-1]
-            if firstRectangleArea != 0:
-                dForwardArea = np.concatenate(([0], [firstRectangleArea],
-                                              expectedDist[nextInt:]))
-            else:
-                dForwardArea = np.concatenate(([firstRectangleArea],
+        firstRectangleArea = dx*expectedDist[nextInt-1]
+        if firstRectangleArea != 0:
+            dForwardArea = np.concatenate(([0], [firstRectangleArea],
+                                          expectedDist[nextInt:]))
+        else:
+            dForwardArea = np.concatenate(([firstRectangleArea],
                                               expectedDist[nextInt:]))
 
-        elif mode == "trapazoid":
-            slopes = self.pdf[1:] - self.pdf[:-1]
-            firstTrapazoidArea = dx * (2 * self.pdf[nextInt] - 
-                                       slopes[nextInt-1] * dx) / 2
-            if firstTrapazoidArea != 0:
-                dForwardArea = np.concatenate(([0], [firstTrapazoidArea],
-                                              expectedDist[nextInt:]))
-            else:
-                dForwardArea = np.concatenate(([firstTrapazoidArea],
-                                              expectedDist[nextInt:]))
-            
+           
         forwardArea = np.cumsum(dForwardArea)
         return forwardArea
-
-    def buildPDFfromFilter(self):
-        filteredDist = self.expectedDist
-        pdf = np.zeros(len(filteredDist)+1)
-
-        for i, f in enumerate(filteredDist):
-            pdf[i+1] = 2*f - pdf[i]
-        
-        return pdf
 
 def periodicDNL(bins, amp=0.1):
     n = 18
@@ -224,11 +204,6 @@ def sinusoid(amp=1, freq=1):
     x = np.arange(adcRange)
     y = amp * np.sin(freq * x)
     return y
-
-def applyADCtoDistributionBasic(adcBins, distribution):
-    dnl = calculateDNL(adcBins)
-    dnlDistribution = (1 + dnl) * distribution
-    return dnlDistribution
 
 def applyADCtoDistributionSophisticated(adcBins, distribution, minCounts=100):
     mask = distribution > minCounts

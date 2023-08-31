@@ -30,29 +30,32 @@ def buildADCBinsFromINL(inl):
     return edges
 
 class ADCconstructor():
-    def __init__(self, measuredDist, expectedDist, minCounts=100, xCutoff=0):
-        useable = np.logical_and(expectedDist > minCounts, measuredDist > minCounts)
-
+    def __init__(self, measuredDist, expectedDist):
         self.codes = np.arange(len(measuredDist))
+        self.measuredDist = measuredDist
+        self.expectedDist = expectedDist
 
-        firstCode = max(self.codes[useable][0], xCutoff)
-        lastCode = self.codes[useable][-1]
+    def buildADCEdges(self, minCounts=100, xLowerCutoff=0, xUpperCutoff=None, mode="riemann"):
+        measuredDist = self.measuredDist
+
+        if xUpperCutoff is None:
+            xUpperCutoff = self.codes[-1]+1
+
+        useable = np.logical_and(self.expectedDist > minCounts, measuredDist > minCounts)
+
+        firstCode = max(self.codes[useable][0], xLowerCutoff)
+        lastCode = min(self.codes[useable][-1], xUpperCutoff)
 
         if lastCode < firstCode:
-            raise ValueError("firstCode cannot be greater than lastCode. Perhaps xCutoff is too high.")
+            raise ValueError("firstCode cannot be greater than lastCode.")
         
         workingCodes = np.arange(firstCode, lastCode+1)
-        fudgeFactor = measuredDist[workingCodes].sum() / expectedDist[workingCodes].sum()
+        fudgeFactor = measuredDist[workingCodes].sum() / self.expectedDist[workingCodes].sum()
 
         self.workingCodes = workingCodes
-        self.measuredDist = measuredDist
-        self.expectedDist = expectedDist * fudgeFactor
-        #self.pdf = self.buildPDFfromFilter() # deprecated with spline
-        self._minCounts = minCounts
-        self._xCutoff = xCutoff
+        self.fudgeFactor = fudgeFactor
 
-    def buildADCEdges(self, mode="riemann"):
-        preCodes = np.arange(self.workingCodes[0])
+        preCodes = np.arange(workingCodes[0])
        
         if mode == "riemann":
             edges  =  self._buildEdgesRiemann()
@@ -68,14 +71,13 @@ class ADCconstructor():
         codes = self.codes
         workingCodes = self.workingCodes
         measuredDist = self.measuredDist
-        expectedDist = self.expectedDist
+        expectedDist = self.expectedDist * self.fudgeFactor
 
         assert expectedDist[0] == 0
 
         expectedDistIntegral = np.cumsum(expectedDist)
         self.spline = CubicSpline(codes, expectedDistIntegral)
         spline = self.spline
-        #splineDerivative = self.spline.derivative()
 
         edges = [workingCodes[0]]
 
@@ -99,7 +101,7 @@ class ADCconstructor():
             while len(edges) < i+2: 
                 integral = spline(rightEdge-1) - spline(leftEdge-1)
                 stopCondition = (nCounts - 1e-4 * nCounts <
-                                 integral < nCounts + 1e-4 * nCounts) #make the requirement sufficient
+                                 integral < nCounts + 1e-4 * nCounts)
                 tooWide = nCounts < integral
 
                 if stopCondition:					
